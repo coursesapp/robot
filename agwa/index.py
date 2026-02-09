@@ -21,14 +21,16 @@ CONFIG = {
     "hog_cells_per_block": (1, 1),
     "batch_size": 32,
     "epochs": 30,
-    "learning_rate": 0.0003,
-    "hidden_layers": [2048, 1024],
-    "voc_root": "/kaggle/input/voc0712/VOC_dataset/VOCdevkit/VOC2012", # غير المسار هنا
+    "lr_confidence": 0.0003,  # Learning rate for confidence head
+    "lr_box": 0.0003,         # Learning rate for box head
+    "hidden_layers": [2048, 1024 , 500],
+    "voc_root": "/kaggle/input/voc0712/VOC_dataset/VOCdevkit/VOC2012",
     "model_path": "multilevel_hog_model.pth",
     "features_cache_dir": "cache_multilevel_hog",
     "lambda_obj": 2.0,
-    "lambda_noobj": 0.5,
-    "lambda_box": 5.0
+    "lambda_noobj": 1.0,
+    "lambda_box": 2.0,
+    "assignment_margin": 0.1  # 10% margin for grid assignment (0.0 = strict, 0.2 = very relaxed)
 }
 
 # حساب إجمالي عدد الخلايا (1*1 + 2*2 + 3*3 = 14)
@@ -65,8 +67,10 @@ def parse_voc_multilevel(xml_path, config):
                         g_xmin, g_ymin = col * grid_unit, row * grid_unit
                         g_xmax, g_ymax = (col + 1) * grid_unit, (row + 1) * grid_unit
                         
-                        # شرط: الكائن بالكامل داخل الخلية (Punished if not fully inside)
-                        if xmin >= g_xmin and ymin >= g_ymin and xmax <= g_xmax and ymax <= g_ymax:
+                        # شرط: الكائن داخل الخلية مع هامش مسموح (margin allowance)
+                        margin = config["assignment_margin"]
+                        if (xmin >= g_xmin - margin and ymin >= g_ymin - margin and 
+                            xmax <= g_xmax + margin and ymax <= g_ymax + margin):
                             idx = level_start_idx + (row * level + col)
                             if target[idx, 0] == 0:
                                 target[idx, 0] = 1.0
@@ -138,13 +142,16 @@ class MultiLevelDetectorMLP(nn.Module):
         box = self.box_head(features)          # [batch, 14*4]
         return conf, box
 
-def weighted_loss(conf_pred, box_pred, target):
+def compute_losses(conf_pred, box_pred, target):
     """
-    Multi-head loss function
+    Separate loss computation for multi-head architecture
     Args:
         conf_pred: [batch, 14] - confidence predictions
         box_pred: [batch, 14*4] - box predictions
         target: [batch, 14*5] - ground truth
+    Returns:
+        loss_confidence: weighted confidence loss
+        loss_box: weighted box loss
     """
     target = target.view(-1, TOTAL_CELLS, 5)
     conf_pred = conf_pred.view(-1, TOTAL_CELLS)           # [batch, 14]
@@ -159,27 +166,30 @@ def weighted_loss(conf_pred, box_pred, target):
     # Confidence Loss للخلايا اللي فيها كائنات
     loss_conf_obj = nn.functional.binary_cross_entropy_with_logits(
         conf_pred[obj_mask], conf_target[obj_mask], reduction='sum'
-    ) if obj_mask.sum() > 0 else 0
+    ) if obj_mask.sum() > 0 else torch.tensor(0.0, device=conf_pred.device)
     
     # Confidence Loss للخلايا الفارغة
     loss_conf_noobj = nn.functional.binary_cross_entropy_with_logits(
         conf_pred[noobj_mask], conf_target[noobj_mask], reduction='sum'
-    ) if noobj_mask.sum() > 0 else 0
+    ) if noobj_mask.sum() > 0 else torch.tensor(0.0, device=conf_pred.device)
     
     # Box Loss (MSE) - فقط للخلايا اللي فيها كائنات
-    loss_box = nn.functional.mse_loss(
+    loss_box_raw = nn.functional.mse_loss(
         torch.sigmoid(box_pred[obj_mask]), 
         box_target[obj_mask], 
         reduction='sum'
-    ) if obj_mask.sum() > 0 else 0
+    ) if obj_mask.sum() > 0 else torch.tensor(0.0, device=box_pred.device)
     
     # Normalize by batch size
     batch_size = conf_pred.size(0)
-    total_loss = (CONFIG["lambda_obj"] * loss_conf_obj + 
-                  CONFIG["lambda_noobj"] * loss_conf_noobj + 
-                  CONFIG["lambda_box"] * loss_box) / batch_size
     
-    return total_loss
+    # Apply weights and normalize
+    loss_confidence = (CONFIG["lambda_obj"] * loss_conf_obj + 
+                       CONFIG["lambda_noobj"] * loss_conf_noobj) / batch_size
+    
+    loss_box = (CONFIG["lambda_box"] * loss_box_raw) / batch_size
+    
+    return loss_confidence, loss_box
 
 # --- 5. Inference Function ---
 def predict_and_show(model, img_path, config, threshold=0.3):
@@ -232,7 +242,16 @@ if __name__ == "__main__":
     
     sample_feat, _ = dataset[0]
     model = MultiLevelDetectorMLP(sample_feat.shape[0], CONFIG["hidden_layers"], TOTAL_CELLS).to(device)
-    optimizer = optim.AdamW(model.parameters(), lr=CONFIG["learning_rate"])
+    
+    # Separate optimizers for each head
+    optimizer_conf = optim.AdamW(
+        list(model.backbone.parameters()) + list(model.confidence_head.parameters()),
+        lr=CONFIG["lr_confidence"]
+    )
+    optimizer_box = optim.AdamW(
+        list(model.backbone.parameters()) + list(model.box_head.parameters()),
+        lr=CONFIG["lr_box"]
+    )
     
     best_val_loss = float('inf')
     best_model_path = "best_" + CONFIG["model_path"]
@@ -243,29 +262,50 @@ if __name__ == "__main__":
     for epoch in range(CONFIG["epochs"]):
         # Training phase
         model.train()
-        train_loss_sum = 0
+        train_conf_loss_sum = 0
+        train_box_loss_sum = 0
         for f, t in tqdm(train_loader, desc=f"Epoch {epoch+1} [Train]"):
             f, t = f.to(device), t.to(device)
-            optimizer.zero_grad()
+            
+            # Compute separate losses
             conf_pred, box_pred = model(f)
-            loss = weighted_loss(conf_pred, box_pred, t)
-            loss.backward()
-            optimizer.step()
-            train_loss_sum += loss.item()
-        avg_train_loss = train_loss_sum / len(train_loader)
+            loss_conf, loss_box = compute_losses(conf_pred, box_pred, t)
+            
+            # Backward pass for confidence head
+            optimizer_conf.zero_grad()
+            loss_conf.backward(retain_graph=True)
+            optimizer_conf.step()
+            
+            # Backward pass for box head
+            optimizer_box.zero_grad()
+            loss_box.backward()
+            optimizer_box.step()
+            
+            train_conf_loss_sum += loss_conf.item()
+            train_box_loss_sum += loss_box.item()
+        
+        avg_train_conf_loss = train_conf_loss_sum / len(train_loader)
+        avg_train_box_loss = train_box_loss_sum / len(train_loader)
         
         # Validation phase
         model.eval()
-        val_loss_sum = 0
+        val_conf_loss_sum = 0
+        val_box_loss_sum = 0
         with torch.no_grad():
             for f, t in tqdm(val_loader, desc=f"Epoch {epoch+1} [Val]", leave=False):
                 f, t = f.to(device), t.to(device)
                 conf_pred, box_pred = model(f)
-                loss = weighted_loss(conf_pred, box_pred, t)
-                val_loss_sum += loss.item()
-        avg_val_loss = val_loss_sum / len(val_loader)
+                loss_conf, loss_box = compute_losses(conf_pred, box_pred, t)
+                val_conf_loss_sum += loss_conf.item()
+                val_box_loss_sum += loss_box.item()
         
-        print(f"Epoch {epoch+1}/{CONFIG['epochs']} - Training Loss: {avg_train_loss:.4f} | Validation Loss: {avg_val_loss:.4f}")
+        avg_val_conf_loss = val_conf_loss_sum / len(val_loader)
+        avg_val_box_loss = val_box_loss_sum / len(val_loader)
+        avg_val_loss = avg_val_conf_loss + avg_val_box_loss  # Total for model saving
+        
+        print(f"Epoch {epoch+1}/{CONFIG['epochs']}")
+        print(f"  Train - Conf: {avg_train_conf_loss:.4f}, Box: {avg_train_box_loss:.4f}, Total: {avg_train_conf_loss + avg_train_box_loss:.4f}")
+        print(f"  Val   - Conf: {avg_val_conf_loss:.4f}, Box: {avg_val_box_loss:.4f}, Total: {avg_val_loss:.4f}")
         
         # Save best model
         if avg_val_loss < best_val_loss:
