@@ -127,35 +127,54 @@ class MultiLevelDetectorMLP(nn.Module):
             layers.extend([nn.Linear(last_dim, h), nn.LeakyReLU(0.1), nn.BatchNorm1d(h), nn.Dropout(0.2)])
             last_dim = h
         self.backbone = nn.Sequential(*layers)
-        self.head = nn.Linear(last_dim, total_cells * 5)
+        
+        # Multi-Head Architecture
+        self.confidence_head = nn.Linear(last_dim, total_cells)  # 14 × 1 (confidence)
+        self.box_head = nn.Linear(last_dim, total_cells * 4)     # 14 × 4 (cx, cy, w, h)
 
-    def forward(self, x): return self.head(self.backbone(x))
+    def forward(self, x):
+        features = self.backbone(x)
+        conf = self.confidence_head(features)  # [batch, 14]
+        box = self.box_head(features)          # [batch, 14*4]
+        return conf, box
 
-def weighted_loss(pred, target):
-    pred = pred.view(-1, TOTAL_CELLS, 5)
+def weighted_loss(conf_pred, box_pred, target):
+    """
+    Multi-head loss function
+    Args:
+        conf_pred: [batch, 14] - confidence predictions
+        box_pred: [batch, 14*4] - box predictions
+        target: [batch, 14*5] - ground truth
+    """
     target = target.view(-1, TOTAL_CELLS, 5)
-    obj_mask = target[:, :, 0] == 1
-    noobj_mask = target[:, :, 0] == 0
+    conf_pred = conf_pred.view(-1, TOTAL_CELLS)           # [batch, 14]
+    box_pred = box_pred.view(-1, TOTAL_CELLS, 4)          # [batch, 14, 4]
+    
+    conf_target = target[:, :, 0]      # [batch, 14]
+    box_target = target[:, :, 1:]      # [batch, 14, 4]
+    
+    obj_mask = conf_target == 1
+    noobj_mask = conf_target == 0
     
     # Confidence Loss للخلايا اللي فيها كائنات
     loss_conf_obj = nn.functional.binary_cross_entropy_with_logits(
-        pred[obj_mask][:, 0], target[obj_mask][:, 0], reduction='sum'
+        conf_pred[obj_mask], conf_target[obj_mask], reduction='sum'
     ) if obj_mask.sum() > 0 else 0
     
     # Confidence Loss للخلايا الفارغة
     loss_conf_noobj = nn.functional.binary_cross_entropy_with_logits(
-        pred[noobj_mask][:, 0], target[noobj_mask][:, 0], reduction='sum'
+        conf_pred[noobj_mask], conf_target[noobj_mask], reduction='sum'
     ) if noobj_mask.sum() > 0 else 0
     
-    # Box Loss (MSE)
+    # Box Loss (MSE) - فقط للخلايا اللي فيها كائنات
     loss_box = nn.functional.mse_loss(
-        torch.sigmoid(pred[obj_mask][:, 1:]), 
-        target[obj_mask][:, 1:], 
+        torch.sigmoid(box_pred[obj_mask]), 
+        box_target[obj_mask], 
         reduction='sum'
     ) if obj_mask.sum() > 0 else 0
     
     # Normalize by batch size
-    batch_size = pred.size(0)
+    batch_size = conf_pred.size(0)
     total_loss = (CONFIG["lambda_obj"] * loss_conf_obj + 
                   CONFIG["lambda_noobj"] * loss_conf_noobj + 
                   CONFIG["lambda_box"] * loss_box) / batch_size
@@ -175,7 +194,9 @@ def predict_and_show(model, img_path, config, threshold=0.3):
     feat_t = torch.from_numpy(feat).unsqueeze(0).to(device)
     
     with torch.no_grad():
-        preds = torch.sigmoid(model(feat_t)).view(TOTAL_CELLS, 5).cpu().numpy()
+        conf_pred, box_pred = model(feat_t)
+        conf_pred = torch.sigmoid(conf_pred).view(TOTAL_CELLS).cpu().numpy()
+        box_pred = torch.sigmoid(box_pred).view(TOTAL_CELLS, 4).cpu().numpy()
 
     fig, ax = plt.subplots(1, figsize=(7, 7))
     ax.imshow(cv2.cvtColor(orig, cv2.COLOR_BGR2RGB))
@@ -184,16 +205,16 @@ def predict_and_show(model, img_path, config, threshold=0.3):
     colors = {0: 'red', 1: 'blue', 5: 'lime'}
     
     for i in range(TOTAL_CELLS):
-        if preds[i, 0] > threshold:
+        if conf_pred[i] > threshold:
             level_color = 'white'
             for off in offsets:
                 if i >= off: level_color = colors[off]
             
-            cx, cy, bw, bh = preds[i, 1:]
+            cx, cy, bw, bh = box_pred[i]
             x, y = (cx - bw/2) * w_orig, (cy - bh/2) * h_orig
             w, h = bw * w_orig, bh * h_orig
             ax.add_patch(patches.Rectangle((x, y), w, h, linewidth=2, edgecolor=level_color, facecolor='none'))
-            ax.text(x, y-5, f"{preds[i, 0]:.2f}", color='white', fontsize=8, bbox=dict(facecolor=level_color, alpha=0.5))
+            ax.text(x, y-5, f"{conf_pred[i]:.2f}", color='white', fontsize=8, bbox=dict(facecolor=level_color, alpha=0.5))
     plt.axis('off')
     plt.show()
 
@@ -226,7 +247,8 @@ if __name__ == "__main__":
         for f, t in tqdm(train_loader, desc=f"Epoch {epoch+1} [Train]"):
             f, t = f.to(device), t.to(device)
             optimizer.zero_grad()
-            loss = weighted_loss(model(f), t)
+            conf_pred, box_pred = model(f)
+            loss = weighted_loss(conf_pred, box_pred, t)
             loss.backward()
             optimizer.step()
             train_loss_sum += loss.item()
@@ -238,7 +260,8 @@ if __name__ == "__main__":
         with torch.no_grad():
             for f, t in tqdm(val_loader, desc=f"Epoch {epoch+1} [Val]", leave=False):
                 f, t = f.to(device), t.to(device)
-                loss = weighted_loss(model(f), t)
+                conf_pred, box_pred = model(f)
+                loss = weighted_loss(conf_pred, box_pred, t)
                 val_loss_sum += loss.item()
         avg_val_loss = val_loss_sum / len(val_loader)
         
