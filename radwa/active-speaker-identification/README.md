@@ -4,7 +4,7 @@ This repository is based on [TalkNet-ASD](https://github.com/TaoRuijie/TalkNet-A
 
 > **Original Paper**: *Is Someone Speaking? Exploring Long-term Temporal Features for Audio-visual Active Speaker Detection* [[Paper](https://arxiv.org/pdf/2107.06592.pdf)] [[Video](https://youtu.be/C6bpAgI9zxE)]
 
-![overall.png](utils/overall.png)
+
 
 ---
 
@@ -39,7 +39,7 @@ pip install -r requirement.txt
 
 Download `pretrain_TalkSet.model` and place it in the project root:
 
-👉 [Download pretrain_TalkSet.model](https://drive.google.com/file/d/1AbN9fCf9IexMxEKXLQY2KYBlb-IhSEea)
+ [Download pretrain_TalkSet.model](https://drive.google.com/file/d/1AbN9fCf9IexMxEKXLQY2KYBlb-IhSEea)
 
 #### Run
 
