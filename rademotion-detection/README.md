@@ -1,10 +1,10 @@
-# 😊 Emotion Detection Pipeline
+# Emotion Detection Pipeline
 
 A dual-library facial emotion detection system using **FER** (for real-time webcam) and **DeepFace** (for static image/offline analysis). Both libraries are used intentionally — each where it performs best.
 
 ---
 
-## 📁 Project Structure
+##  Project Structure
 
 ```
 emotion-detection/
@@ -18,7 +18,7 @@ emotion-detection/
 
 ---
 
-## 🧠 Library Choice Rationale
+##  Library Choice Rationale
 
 | Use Case | Library | Reason |
 |---|---|---|
@@ -28,7 +28,7 @@ emotion-detection/
 
 ---
 
-## ⚙️ Installation
+##  Installation
 
 **Python 3.8–3.10 recommended** (TensorFlow compatibility).
 
@@ -57,7 +57,7 @@ set TF_FORCE_GPU_ALLOW_GROWTH=true      # Windows
 
 ---
 
-## 🚀 Usage
+##  Usage
 
 ### Real-Time Webcam (FER)
 
@@ -112,7 +112,7 @@ jupyter notebook notebook_demo.ipynb
 
 ---
 
-## 📦 Dependencies
+## Dependencies
 
 | Package | Purpose |
 |---|---|
@@ -127,7 +127,7 @@ Full list with pinned versions in `requirements.txt`.
 
 ---
 
-## 🛠️ Known Issues & Limitations
+##  Known Issues & Limitations
 
 - **First-run delay:** DeepFace downloads model weights on first use. Subsequent runs are fast.
 - **CPU performance:** Real-time DeepFace with RetinaFace is slow on CPU — use FER for webcam on CPU-only machines.
@@ -136,6 +136,6 @@ Full list with pinned versions in `requirements.txt`.
 
 ---
 
-## 📄 License
+##  License
 
 MIT License. See `LICENSE` for details.
