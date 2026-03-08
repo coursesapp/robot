@@ -1,0 +1,9 @@
+{
+    "mongo_uri": "mongodb://localhost:27017",
+    "database_name": "robot_memory",
+    "qdrant_uri": "http://localhost:6333",
+    "qdrant_collection_names": {
+        "identity_embeddings": "identity_embeddings",
+        "text_embeddings": "text_embeddings"
+    }
+}
