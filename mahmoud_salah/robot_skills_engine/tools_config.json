@@ -1,0 +1,76 @@
+[
+    {
+      "type": "function",
+      "function": {
+        "name": "execute_python_code",
+        "description": "Executes a string of Python code to solve math, physics, or logic problems and returns the printed output.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "code_string": {
+              "type": "string",
+              "description": "The Python code to execute."
+            }
+          },
+          "required": ["code_string"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "control_hardware_motors",
+        "description": "Sends commands to the physical robot hardware to move specific body parts.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "body_part": {
+              "type": "string",
+              "enum": ["left_arm", "right_arm", "head", "torso"],
+              "description": "The physical part of the robot to move."
+            },
+            "action": {
+              "type": "string",
+              "enum": ["raise", "lower", "nod", "turn_left", "turn_right"],
+              "description": "The movement action to perform."
+            }
+          },
+          "required": ["body_part", "action"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_current_weather",
+        "description": "Gets the current weather for a specific location.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": {
+              "type": "string",
+              "description": "The city and country, e.g., Cairo, Egypt."
+            }
+          },
+          "required": ["location"]
+        }
+      }
+    },
+    {
+        "type": "function",
+        "function": {
+          "name": "perform_deep_search",
+          "description": "Searches the internet for real-time information, news, or facts.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "description": "The exact search query to look up on the web."
+              }
+            },
+            "required": ["query"]
+          }
+        }
+      }
+  ]
