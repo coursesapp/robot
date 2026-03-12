@@ -1,0 +1,51 @@
+camera:
+  device_id: 0
+  width: 640
+  height: 480
+  fps: 2
+
+vision:
+  yolo_model: models/yolov8n.pt
+  yolo_face_model: models/yolov8n-face.pt
+  conf_threshold: 0.45
+  emotion_every_n_frames: 3
+
+face:
+  # Using OpenCV YuNet + SFace
+  det_model: models/face_detection_yunet_2023mar.onnx
+  rec_model: models/face_recognition_sface_2021dec.onnx
+  similarity_threshold: 0.50      # SFace uses cosine similarity, 0.4-0.5 is good
+  det_size: [640, 640]
+
+audio:
+  whisper_model: tiny.en
+  piper_model: models/en_US-lessac-medium.onnx
+  piper_config: models/en_US-lessac-medium.onnx.json
+  vad_threshold: 0.5
+
+llm:
+  # Using Ollama or llama-server or Groq
+  # .\llama-server.exe -m models\Qwen2.5-3B-Instruct-Q4_K_M.gguf -ngl 999 -c 1024 -t 4 -b 512
+  engine: "groq"          # Options: "ollama", "llamacpp", or "groq"
+  model_name: "qwen2.5:3b"  # User's requested model
+  llama_api_url: "http://127.0.0.1:8080/v1/chat/completions" # Used if engine="llamacpp"
+  groq_api_key: "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" # Used if engine="groq"
+  groq_model: "llama-3.3-70b-versatile" # Or "llama-3.1-8b-instant" for ultra speed
+  context_length: 2048
+  max_tokens: 1024
+  temperature: 0.7
+
+memory:
+  db_path: memory/agent.db
+  faiss_index: memory/faces.index
+  chroma_db_path: memory/chroma_db
+  embedding_dim: 128  # SFace dimension
+  consent_required: true
+
+logging:
+  level: INFO
+  log_file: logs/agent.log
+
+agent:
+  sociality: 0.7       # 0.0 = quiet, 1.0 = very social
+  greet_cooldown: 120  # seconds before re-greeting the same person
