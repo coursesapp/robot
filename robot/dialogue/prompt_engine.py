@@ -23,6 +23,7 @@ Inputs:
 3) Memory:
   current short-term conversation: {current_conversation}
   long-term memory: {memory_input}
+  [PREVIOUS REASONING]: {last_thought}
 
 4) Action Library - The ONLY actions the robot can perform:
   {available_actions}
@@ -135,6 +136,7 @@ class PromptEngine:
         filled_system = self.system_prompt.format(
             current_conversation=current_conversation,
             memory_input=memory_input,
+            last_thought=context.get('last_thought', 'None'),
             available_actions=available_actions,
             user_message=user_text,
             vision_input=vision_input

@@ -1,0 +1,40 @@
+# Virtual Environment
+.venv/
+talknet_env/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Pretrained Models (too large for GitHub)
+*.model
+*.pth
+*.pt
+*.ckpt
+
+# Video/Audio files
+*.mp4
+*.avi
+*.wav
+
+# Experiment outputs
+exps/
+demo/*/pyavi/
+demo/*/pyframes/
+demo/*/pywork/
+demo/*/pycrop/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log

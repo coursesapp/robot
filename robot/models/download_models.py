@@ -6,8 +6,11 @@ from ultralytics import YOLO
 
 def download_file(url, dest_path):
     if dest_path.exists():
-        print(f"✅ {dest_path.name} already exists.")
-        return
+        if dest_path.stat().st_size > 1024:
+            print(f"✅ {dest_path.name} already exists.")
+            return
+        else:
+            print(f"⚠️  {dest_path.name} seems corrupted/incomplete. Re-downloading...")
     
     print(f"⬇️ Downloading {dest_path.name}...")
     response = requests.get(url, stream=True)
@@ -31,20 +34,13 @@ def main():
     
     print("🚀 Starting model downloads...")
 
-    # 1. YOLOv8 Nano (Person Detection)
+    # 1. YOLOv8 Nano (General Object Detection)
     print("\n--- Computervision (YOLOv8-nano) ---")
-    try:
-        model = YOLO("yolov8n.pt")  # Auto-downloads
-        src = Path("yolov8n.pt")
-        dst = models_dir / "yolov8n.pt"
-        if src.exists() and not dst.exists():
-            src.rename(dst)
-        print("✅ YOLOv8-nano ready.")
-    except Exception as e:
-        print(f"❌ Error downloading YOLO: {e}")
+    download_file(
+        "https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.pt",
+        models_dir / "yolov8n.pt"
+    )
 
-    # 2. OpenCV Face Models (YuNet + SFace)
-    print("\n--- Face Recognition (OpenCV YuNet + SFace) ---")
     # Face Detection (YuNet)
     download_file(
         "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx",
@@ -54,6 +50,20 @@ def main():
     download_file(
         "https://github.com/opencv/opencv_zoo/raw/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx",
         models_dir / "face_recognition_sface_2021dec.onnx"
+    )
+
+    # 4. YOLOv8 Face (Alternative for better people tracking)
+    print("\n--- Face Detection (YOLOv8-face) ---")
+    download_file(
+        "https://huggingface.co/Bingsu/adetailer/resolve/main/face_yolov8n.pt",
+        models_dir / "yolov8n-face.pt"
+    )
+
+    # 5. Speaker Identification (CAM++)
+    print("\n--- Speaker Identification (Wespeaker CAM++) ---")
+    download_file(
+        "https://huggingface.co/Wespeaker/wespeaker-voxceleb-campplus/resolve/main/voxceleb_CAM++.onnx?download=true",
+        models_dir / "voxceleb_CAM++.onnx"
     )
 
     # 3. Piper TTS (Lessac Medium)

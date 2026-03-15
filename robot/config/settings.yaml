@@ -2,23 +2,26 @@ camera:
   device_id: 0
   width: 640
   height: 480
-  fps: 2
+  fps: 10
 
 vision:
   yolo_model: models/yolov8n.pt
   yolo_face_model: models/yolov8n-face.pt
   conf_threshold: 0.45
-  emotion_every_n_frames: 3
+  emotion_every_n_frames: 20 # Once every 2 seconds (at 10 FPS)
+  identification_every_n_frames: 10
+  mouth_track_every_n_frames: 1 # Set to 1 for maximum precision in talking detection
 
 face:
   # Using OpenCV YuNet + SFace
   det_model: models/face_detection_yunet_2023mar.onnx
   rec_model: models/face_recognition_sface_2021dec.onnx
-  similarity_threshold: 0.50      # SFace uses cosine similarity, 0.4-0.5 is good
+  similarity_threshold: 0.35      # Lowered for SFace stability; creates a 'gray zone'
   det_size: [640, 640]
 
+# small is better
 audio:
-  whisper_model: tiny.en
+  whisper_model: base
   piper_model: models/en_US-lessac-medium.onnx
   piper_config: models/en_US-lessac-medium.onnx.json
   vad_threshold: 0.5
@@ -39,7 +42,7 @@ memory:
   db_path: memory/agent.db
   faiss_index: memory/faces.index
   chroma_db_path: memory/chroma_db
-  embedding_dim: 128  # SFace dimension
+  embedding_dim: 128  # SFace dimension (previously 512 for FaceNet)
   consent_required: true
 
 logging:
