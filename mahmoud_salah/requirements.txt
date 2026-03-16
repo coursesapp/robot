@@ -1,0 +1,7 @@
+kokoro
+soundfile
+sounddevice
+faster-whisper
+colorama
+numpy
+gpt4all
