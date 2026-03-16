@@ -116,7 +116,9 @@ class PromptEngine:
         vision_input = json.dumps({
             "current_speaker": identities[0] if identities else "unknown",
             "humans": humans_json,
-            "objects": objects
+            "objects": objects,
+            "identity_conflict": context.get('identity_conflict', False),
+            "conflict_message": context.get('conflict_message', "")
         }, ensure_ascii=False, indent=2)
 
         # --- Short-term conversation history ---

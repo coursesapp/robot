@@ -29,8 +29,12 @@ logger = logging.getLogger("STT")
 
 
 class STTEngine:
-    def __init__(self, model_size: str = "small", callback: Optional[Callable[[str], None]] = None):
+    def __init__(self, model_size: str = "small", callback: Optional[Callable[[str, np.ndarray], None]] = None, 
+                 on_speech_start: Optional[Callable[[], None]] = None,
+                 on_processing: Optional[Callable[[], None]] = None):
         self.callback = callback
+        self.on_speech_start = on_speech_start
+        self.on_processing = on_processing
         self.running = False
 
         # --- SETTINGS (ported from HearingEngine) ---
@@ -162,6 +166,8 @@ class STTEngine:
             volume = np.sqrt(np.mean(chunk_np ** 2))
 
             if volume >= self.SILENCE_THRESHOLD:
+                if not has_speech and self.on_speech_start:
+                    self.on_speech_start()
                 silence_start_time = None   # Reset silence timer on speech
                 has_speech = True
             else:
@@ -190,6 +196,8 @@ class STTEngine:
 
                 # Transcribe whatever audio is left in the buffer
                 if len(current_audio) > self.SAMPLE_RATE * 1.0 and has_speech:
+                    if self.on_processing:
+                        self.on_processing()
                     logger.info("Finalizing speech…")
                     last_text = self._transcribe_chunk(current_audio)
                     if last_text:

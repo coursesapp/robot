@@ -25,6 +25,8 @@ from memory.social_memory import SocialMemory
 from memory.vector_memory import VectorMemory
 from dashboard.web_dashboard import WebDashboard
 from core.actions import ActionLibrary
+from core.interaction import InteractionStrategy
+from core.local_strategy import LocalStrategy
 import random
 import json
 
@@ -78,6 +80,9 @@ class AgentLoop:
         # Audio-Visual Fusion State
         self.speaker_id_engine = None
         self.mouth_history = {} # track_id -> deque(maxlen=20)
+        
+        # Interaction Strategy
+        self.interaction_strategy: Optional[InteractionStrategy] = None
 
     def start(self):
         """Initialize all modules."""
@@ -114,10 +119,16 @@ class AgentLoop:
         self.vector_memory = VectorMemory(cfg['memory'].get('chroma_db_path', 'memory/chroma_db'))
 
         # Audio
-        self.stt = STTEngine(cfg['audio']['whisper_model'], callback=self.on_speech)
+        self.stt = STTEngine(cfg['audio']['whisper_model'], 
+                            callback=self.on_speech, 
+                            on_speech_start=self.on_speech_start,
+                            on_processing=self.on_speech_processing)
         self.stt.start()
         
-        self.tts = TTSEngine(cfg['audio']['piper_model'], cfg['audio'].get('piper_config'))
+        self.tts = TTSEngine(cfg['audio']['piper_model'], 
+                            cfg['audio'].get('piper_config'),
+                            on_start=self.on_tts_start,
+                            on_end=self.on_tts_end)
         self.tts.start()
 
         self.speaker_id_engine = SpeakerRecognizer(cfg['audio'].get('speaker_model', "models/voxceleb_CAM++.onnx"))
@@ -131,6 +142,7 @@ class AgentLoop:
         
         # State for proactive behavior
         self.last_greeted = {} # track_id -> timestamp
+        self.visual_conf = {}  # track_id -> confidence score
         self.turn_count = 0
         
         # Dashboard
@@ -161,14 +173,41 @@ class AgentLoop:
             # Run tracking
             tracks = self.detector.detect_and_track(frame)
             
+            # Tracks in current frame
+            current_tids = {t.track_id for t in tracks}
+            
             with self.vision_lock:
                 self.latest_frame = frame
-                self.latest_tracks = tracks
+                self.latest_tracks = tracks # for LLM
+                
+                # Cleanup mouth history for tracks NOT in current frame
+                for tid in list(self.mouth_history.keys()):
+                    if tid not in current_tids:
+                        self.mouth_history.pop(tid, None)
             
             # Enforce FPS worker limit to save CPU
             elapsed = time.time() - worker_start
             if elapsed < worker_interval:
                 time.sleep(worker_interval - elapsed)
+
+    def on_speech_start(self):
+        """Instant callback when user starts talking (for local mute)."""
+        self.dashboard.update_state(lambda st: setattr(st, 'avatar_state', 'greeting'))
+        if self.interaction_strategy:
+            self.interaction_strategy.on_speech_start()
+
+    def on_speech_processing(self):
+        """Called when user stops talking and STT starts transcribing."""
+        self.dashboard.update_state(lambda st: setattr(st, 'avatar_state', 'thinking'))
+
+    def on_tts_start(self):
+        """Called when agent starts speaking."""
+        self.dashboard.update_state(lambda st: setattr(st, 'avatar_state', 'explaining'))
+
+    def on_tts_end(self):
+        """Called when agent finishes speaking."""
+        # Only reset to idle if no other high-priority states are active
+        self.dashboard.update_state(lambda st: setattr(st, 'avatar_state', 'idle'))
 
     def on_speech(self, text: str, audio_np: np.ndarray):
         """
@@ -179,10 +218,13 @@ class AgentLoop:
         
         # 1. Correlate with Visual Mouth Movement FIRST
         best_track_id = None
+        now_t = time.time()
         with self.vision_lock:
             max_activity = 0
             for tid, history in self.mouth_history.items():
-                if len(history) > 5:
+                # ONLY consider tracks seen in the last 0.5 seconds (effectively currently visible)
+                last_seen = self.last_seen_ids.get(tid, 0)
+                if (now_t - last_seen) < 0.5 and len(history) > 5:
                     # activity defined as standard deviation of mouth distance
                     activity = np.std(history)
                     if activity > max_activity:
@@ -190,31 +232,59 @@ class AgentLoop:
                         best_track_id = tid
         
         visual_pid = self.known_people.get(best_track_id, "unknown") if best_track_id else "unknown"
+        visual_conf = self.visual_conf.get(best_track_id, 0.0) if best_track_id else 0.0
 
-        # 2. Identify Speaker by Voice (and LEARN if visual_pid is known)
+        # 2. Identify Speaker by Voice
         voice_pid = "unknown"
+        voice_conf = 0.0
         if self.speaker_id_engine:
             voice_embedding = self.speaker_id_engine.extract_embedding(audio_np)
             if voice_embedding is not None:
-                # We pass visual_pid so the store can link the voice if it's new
-                voice_pid, _ = self.identity_store.find_or_create_voice(voice_embedding, person_id=visual_pid)
-                logger.info(f"Voice Identification: {voice_pid}")
+                voice_pid, _, voice_conf = self.identity_store.find_or_create_voice(voice_embedding, person_id=visual_pid)
+                logger.info(f"Voice Identity: {voice_pid} (conf: {voice_conf:.2f})")
 
-        # 3. Fuse: If voice is known, use it. If not, fallback to active speaker track.
-        final_pid = voice_pid
-        if voice_pid == "unknown":
+        # 3. Audio-First Fusion & Conflict Detection
+        final_pid = "unknown"
+        identity_conflict = False
+        conflict_msg = ""
+
+        # Logic: Priority for Audio if it's highly confident
+        # We only trigger a conflict if BOTH are very confident and disagree.
+        if voice_conf > 0.8:
+            final_pid = voice_pid
+            if visual_pid != "unknown" and visual_pid != voice_pid and visual_conf > 0.85:
+                identity_conflict = True
+                voice_name = self.social_memory.get(voice_pid).get('name', voice_pid)
+                visual_name = self.social_memory.get(visual_pid).get('name', visual_pid)
+                conflict_msg = f"Identity Conflict: Voice is strongly {voice_name}, but Vision is certain it sees {visual_name} speaking."
+                logger.warning(conflict_msg)
+        elif visual_conf > 0.7:
+            # Fallback to visual ID if audio is not enough
             final_pid = visual_pid
-        elif best_track_id and visual_pid == "unknown":
-            # Label the unknown face based on voice recognition result!
-            logger.info(f"Fusion: Labeling track {best_track_id} as {voice_pid} via voice.")
-            self.known_people[best_track_id] = voice_pid
+        elif voice_conf > 0.6:
+            # If vision is low, but audio is decent, trust audio
+            final_pid = voice_pid
+        else:
+            final_pid = visual_pid # Final fallback to visual track
 
-        # 4. Enqueue for LLM Brain
-        self.current_speech.put((text, final_pid))
+        # 4. Delegate to Active Interaction Strategy
+        metadata = {
+            "final_pid": final_pid,
+            "current_emotions": self.dashboard.state.emotions if hasattr(self.dashboard.state, 'emotions') else [],
+            "tracks": self.latest_tracks,
+            "wh": (self.camera.width, self.camera.height),
+            "identity_conflict": identity_conflict,
+            "conflict_message": conflict_msg
+        }
+        self.interaction_strategy.on_speech(text, audio_np, metadata)
         
         # Update Dashboard
         def update_stt(state):
-            state.add_event(f"Heard ({final_pid}): {text}")
+            mem = self.social_memory.get(final_pid) if final_pid != "unknown" else {}
+            display_name = mem.get('name') or final_pid
+            # Log confidence scores for debugging
+            conf_str = f" [👁️{visual_conf:.2f} 🎙️{voice_conf:.2f}]"
+            state.add_event(f"Heard ({display_name}){conf_str}: {text}")
         self.dashboard.update_state(update_stt)
 
     def stop(self):
@@ -232,6 +302,20 @@ class AgentLoop:
     def run(self, duration: int = 0):
         """Main blocking loop."""
         self.start()
+        
+        # Interaction Strategy Initialization
+        mode = self.config.get('interaction', {}).get('mode', 'local')
+        if mode == 'gemini_live':
+            # Placeholder for now, we'll implement this next
+            try:
+                from core.gemini_strategy import GeminiLiveStrategy
+                self.interaction_strategy = GeminiLiveStrategy(self)
+            except ImportError:
+                logger.warning("GeminiLiveStrategy not found, falling back to LocalStrategy")
+                self.interaction_strategy = LocalStrategy(self)
+        else:
+            self.interaction_strategy = LocalStrategy(self)
+
         self.running = True
         start_time = time.time()
         
@@ -302,10 +386,18 @@ class AgentLoop:
                                 threshold = self.config['face']['similarity_threshold']
                                 
                                 # Identity Matching
-                                matched_id, _ = self.identity_store.find_or_create(face_res['embedding'], threshold=threshold, create=False)
+                                matched_id, _, visual_conf = self.identity_store.find_or_create(face_res['embedding'], threshold=threshold, create=False)
                                 
                                 if matched_id != "unknown":
+                                    # Identity Conflict Check: If track was labeled differently, reset it
+                                    if pid != "unknown" and pid != "Identifying..." and pid != matched_id:
+                                        logger.warning(f"TRACK CONFLICT: Track {track.track_id} was {pid}, now recognized as {matched_id}. Resetting identity.")
+                                        self.mouth_history.pop(track.track_id, None)
+                                        self.vote_history.pop(track.track_id, None)
+                                        self.known_people[track.track_id] = matched_id
+                                    
                                     pid = matched_id
+                                    self.visual_conf[track.track_id] = visual_conf
                                 else:
                                     if pid and pid not in ["unknown", "Identifying...", "Waiting for front view..."]:
                                         if not is_frontal:
@@ -317,17 +409,14 @@ class AgentLoop:
                                         
                                         # If we have 3 stable frames (even better if frontal), create ID
                                         if (is_frontal and count >= 5) or count >= 10:
-                                            pid, _ = self.identity_store.find_or_create(
+                                            pid, _, visual_conf = self.identity_store.find_or_create(
                                                 face_res['embedding'], 
                                                 threshold=threshold, 
                                                 create=True, 
                                                 is_frontal=is_frontal
                                             )
+                                            self.visual_conf[track.track_id] = visual_conf
                                             del self.new_id_candidates[track.track_id]
-                                        elif not is_frontal:
-                                            pid = "Waiting for front view..."
-                                        else:
-                                            pid = "Identifying..."
                                             
                                 if pid not in ["unknown", "Identifying...", "Waiting for front view..."]:
                                     self.known_people[track.track_id] = pid
@@ -366,15 +455,25 @@ class AgentLoop:
                             last_any_greet = self.last_greeted.get("_GLOBAL_", 0)
                             cooldown = self.config.get('agent', {}).get('greet_cooldown', 120)
                             
-                            if len(self.vote_history[track.track_id]) >= 5 and (now_t - last_g_time > cooldown) and (now_t - last_any_greet > 20):
+                            if track.track_id in self.vote_history and len(self.vote_history[track.track_id]) >= 5 and (now_t - last_g_time > cooldown) and (now_t - last_any_greet > 20):
                                 has_name = bool(self.social_memory.get(final_pid).get('name'))
+                                event_text = ""
                                 if not has_name:
-                                    self.current_speech.put((f"[System Event: You just saw a person (ID: {final_pid}) whose name you don't know yet. Greet them warmly and ask for their name.]", final_pid))
+                                    event_text = f"[System Event: You just saw a person (ID: {final_pid}) whose name you don't know yet. Greet them warmly and ask for their name.]"
                                 else:
                                     if random.random() < self.config.get('agent', {}).get('sociality', 0.7):
-                                        self.current_speech.put((f"[System Event: You just saw a known person (ID: {final_pid}). Start a friendly conversation.]", final_pid))
-                                self.last_greeted[final_pid] = now_t
-                                self.last_greeted["_GLOBAL_"] = now_t
+                                        event_text = f"[System Event: You just saw a known person (ID: {final_pid}). Start a friendly conversation.]"
+                                
+                                if event_text:
+                                    # Pass to strategy as a system event (no audio)
+                                    self.dashboard.update_state(lambda st: setattr(st, 'avatar_state', 'greeting'))
+                                    self.interaction_strategy.on_speech(event_text, None, {
+                                        "final_pid": final_pid, 
+                                        "current_emotions": current_emotions,
+                                        "is_system_event": True
+                                    })
+                                    self.last_greeted[final_pid] = now_t
+                                    self.last_greeted["_GLOBAL_"] = now_t
                     else:
                         # Non-person Object Snapshot
                         if track.track_id not in self.seen_object_ids:
@@ -385,16 +484,31 @@ class AgentLoop:
                                 os.makedirs("memory/object_snapshots", exist_ok=True)
                                 cv2.imwrite(f"memory/object_snapshots/{track.class_name}_{track.track_id}.jpg", crop)
 
+                # 3. Update Interaction Strategy with Vision Data
+                self.interaction_strategy.on_vision(frame, {
+                    "tracks": tracks,
+                    "wh": (w, h),
+                    "emotions": current_emotions
+                })
+
                 # --- 4. GARBAGE COLLECTION ---
-                if self.frame_count % 300 == 0:
+                if self.frame_count % 100 == 0:
                     now_t = time.time()
-                    stale_ids = [tid for tid, lt in self.last_seen_ids.items() if now_t - lt > 300]
+                    # Global track cleanup (30s timeout)
+                    stale_ids = [tid for tid, lt in self.last_seen_ids.items() if now_t - lt > 30.0]
+                    # Aggressive mouth history cleanup (5s timeout)
+                    mouth_stale = [tid for tid in list(self.mouth_history.keys()) if now_t - self.last_seen_ids.get(tid, 0) > 5.0]
+                    
+                    for tid in mouth_stale:
+                        self.mouth_history.pop(tid, None)
+
                     for tid in stale_ids:
                         self.known_people.pop(tid, None)
                         self.vote_history.pop(tid, None)
                         self.new_id_candidates.pop(tid, None)
                         self.last_seen_ids.pop(tid, None)
                         self.mouth_history.pop(tid, None)
+                        self.visual_conf.pop(tid, None)
                     if stale_ids:
                         logger.debug(f"GC: Cleaned up {len(stale_ids)} stale track IDs.")
 
@@ -437,113 +551,8 @@ class AgentLoop:
                 except Exception as e:
                     logger.error(f"Failed to write live JSON: {e}")
 
-                # --- 2. UNDERSTAND & DECIDE ---
-                try:
-                    speech_packet = self.current_speech.get_nowait()
-                    user_text, speaker_pid = speech_packet
-                except queue.Empty:
-                    user_text = None
-                    speaker_pid = "unknown"
-
-                if user_text and not self.llm_busy:
-                    target_identities = [speaker_pid] if speaker_pid != "unknown" else current_identities
-                    soc_data = [self.social_memory.get(pid) for pid in target_identities]
-                    
-                    objects_spatial = []
-                    for t in tracks:
-                        if t.class_name != 'person':
-                            x1, y1, x2, y2 = t.box
-                            cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-                            pos_x = "left" if cx < w/3 else "right" if cx > 2*w/3 else "center"
-                            pos_y = "top" if cy < h/3 else "bottom" if cy > 2*h/3 else "middle"
-                            objects_spatial.append({"label": t.class_name, "position": f"{pos_y}-{pos_x}"})
-                    
-                    deep_memory = []
-                    if target_identities and not user_text.startswith("[System"):
-                        deep_memory = self.vector_memory.search_past(target_identities[0], user_text, n_results=5)
-
-                    context = {
-                        "identities": target_identities,
-                        "social_data": soc_data,
-                        "emotions": current_emotions,
-                        "objects": objects_spatial,
-                        "history": list(self.context_history),
-                        "deep_memory": deep_memory,
-                        "last_thought": self.last_thought,
-                        "available_actions": self.action_library.get_available_actions_schema(),
-                        "time": time.ctime()
-                    }
-                    prompt = self.prompt_engine.build_prompt(user_text, context)
-                    
-                    self.llm_busy = True
-                    self.context_history.append(f"user: {user_text}")
-                    
-                    def _llm_worker(p=prompt, ut=user_text, tids=list(target_identities)):
-                        try:
-                            self.dashboard.update_state(lambda st: setattr(st, 'llm_status', 'Thinking...') or setattr(st, 'llm_busy', True))
-                            response = self.llm.generate(p)
-                            self.dashboard.update_state(lambda st: setattr(st, 'llm_status', 'Idle') or setattr(st, 'llm_busy', False))
-                            
-                            response_audio = response
-                            try:
-                                json_str = response
-                                if "```json" in json_str: json_str = json_str.split("```json")[1].split("```")[0].strip()
-                                elif "```" in json_str: json_str = json_str.split("```")[1].split("```")[0].strip()
-                                data = json.loads(json_str)
-                                
-                                thought = data.get("internal_thought", "")
-                                if thought:
-                                    self.last_thought = thought
-                                    self.dashboard.update_state(lambda st, t=thought: st.add_event(f"🧠 Thought: {t}") or setattr(st, 'current_thought', t))
-                                
-                                response_audio = data.get("response", "") or response
-                                for act in data.get("actions", []):
-                                    self.action_library.execute(act.get("action"), act.get("parameters", {}))
-                                    
-                                # --- Handle memory summary ---
-                                save_to_memory = data.get("save_to_memory", False)
-                                summary_text = data.get("summary", "")
-                                if save_to_memory and summary_text and tids:
-                                    pid0 = tids[0]
-                                    self.social_memory.update(pid0, {"summary": summary_text})
-                                    self.vector_memory.add_interaction(pid0, f"[Key Info]: {summary_text}", role="system")
-                                    self.dashboard.update_state(lambda st, s=summary_text: st.add_event(f"💾 Saved to memory: {s[:60]}..."))
-                            except:
-                                pass
-                            
-                            self.context_history.append(f"agent: {response_audio}")
-                            self.tts.speak(response_audio)
-
-                            # --- Smart context compression ---
-                            if len(self.context_history) >= 10:
-                                try:
-                                    summary = self.summarizer.summarize(list(self.context_history))
-                                    if summary:
-                                        self.context_history = [f"[Conversation Summary]: {summary}"]
-                                        if tids:
-                                            pid0 = tids[0]
-                                            self.social_memory.update(pid0, {"summary": summary})
-                                            self.vector_memory.add_interaction(pid0, f"[Conversation Summary]: {summary}", role="system")
-                                        self.dashboard.update_state(lambda st: st.add_event(f"📝 Context compressed (summarized)"))
-                                except Exception as se:
-                                    logger.warning(f"Summarizer failed: {se}")
-                            
-                            if tids:
-                                pid0 = tids[0]
-                                self.vector_memory.add_interaction(pid0, ut, role="user")
-                                self.vector_memory.add_interaction(pid0, response_audio, role="agent")
-                                
-                                facts = self.info_extractor.extract(ut)
-                                if facts:
-                                    self.social_memory.update(pid0, facts)
-                                    self.dashboard.update_state(lambda st, fk=list(facts.keys()): st.add_event(f"💾 Facts saved: {fk}"))
-                                
-                        except Exception as le:
-                            logger.error(f"LLM Worker error: {le}")
-                        finally:
-                            self.llm_busy = False
-
-                    threading.Thread(target=_llm_worker, daemon=True).start()
+                # Legacy speech queue processing is now handled by the interaction_strategy.on_speech callback
+                pass
 
         except KeyboardInterrupt:
             self.stop()

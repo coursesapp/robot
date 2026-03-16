@@ -32,7 +32,7 @@ llm:
   engine: "groq"          # Options: "ollama", "llamacpp", or "groq"
   model_name: "qwen2.5:3b"  # User's requested model
   llama_api_url: "http://127.0.0.1:8080/v1/chat/completions" # Used if engine="llamacpp"
-  groq_api_key: "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" # Used if engine="groq"
+  groq_api_key: "[ENCRYPTION_KEY]" # Used if engine="groq"
   groq_model: "llama-3.3-70b-versatile" # Or "llama-3.1-8b-instant" for ultra speed , llama-3.3-70b-versatile , mixtral-8x7b-32768 
   context_length: 2048
   max_tokens: 1024
@@ -46,7 +46,7 @@ interaction:
     tts: "piper"    # options: piper, gemini
     brain: "groq"   # options: groq, ollama, gemini
   gemini:
-    api_key: "AQ.Ab8RN6LphhSNXfyq5hhn2qe79puXNvggAxGcwbeZPIM1bTkkMg" # To be filled by user
+    api_key: "[ENCRYPTION_KEY]"
     model: "gemini-2.0-flash" # gemini-2.5-flash-lite , gemini-2.0-flash
     voice_name: "Aoede" # Options: Aoede, Charon, Fenrir, Kore, Puck
     look_mode_fps: 1

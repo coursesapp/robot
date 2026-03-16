@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aura | Social AI Agent</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0a0c14;
+            --glass: rgba(255, 255, 255, 0.05);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --accent: #00f2ff;
+            --accent-glow: rgba(0, 242, 255, 0.5);
+            --text: #e0e6ed;
+            --bubble-bg: rgba(20, 25, 45, 0.9);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+
+        /* --- Background Effects --- */
+        .bg-glow {
+            position: absolute;
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
+            filter: blur(80px);
+            z-index: -1;
+            opacity: 0.3;
+            transition: all 1s ease;
+        }
+
+        /* --- Avatar Container --- */
+        .avatar-container {
+            position: relative;
+            width: 400px;
+            height: 400px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        #aura-avatar {
+            width: 100%;
+            height: auto;
+        }
+
+        /* --- Dialogue Bubble --- */
+        .dialogue-wrapper {
+            position: absolute;
+            top: -80px;
+            width: 90%;
+            max-width: 500px;
+            perspective: 1000px;
+            z-index: 10;
+        }
+
+        .dialogue-bubble {
+            background: var(--bubble-bg);
+            border: 1px solid var(--glass-border);
+            padding: 20px 25px;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            font-size: 1.2rem;
+            line-height: 1.5;
+            text-align: center;
+            transform-origin: bottom center;
+            animation: bubbleIn 0.5s forwards ease-out;
+            backdrop-filter: blur(10px);
+            opacity: 0;
+        }
+
+        @keyframes bubbleIn {
+            from { opacity: 0; transform: translateY(20px) scale(0.8); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        .bubble-tail {
+            position: absolute;
+            bottom: -10px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0; height: 0;
+            border-left: 10px solid transparent;
+            border-right: 10px solid transparent;
+            border-top: 10px solid var(--bubble-bg);
+        }
+
+        /* --- Avatar SVG Parts --- */
+        .eye { fill: var(--accent); transition: all 0.3s ease; }
+        .mouth { stroke: var(--accent); stroke-width: 3; fill: none; transition: all 0.3s ease; }
+        .head { fill: var(--panel); stroke: var(--glass-border); stroke-width: 1; }
+        .glow-part { filter: drop-shadow(0 0 5px var(--accent)); transition: all 0.5s ease; }
+
+        /* --- Avatar States (CSS Animations) --- */
+        
+        /* IDLE: Blinking and floating */
+        .state-idle .avatar-container { animation: float 4s infinite ease-in-out; }
+        @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-15px); } }
+        
+        .state-idle .eye { animation: blink 5s infinite; }
+        @keyframes blink { 0%, 90%, 100% { transform: scaleY(1); } 95% { transform: scaleY(0); } }
+
+        /* THINKING: Eyes moving, color change */
+        .state-thinking .bg-glow { background: radial-gradient(circle, rgba(147, 51, 234, 0.5) 0%, transparent 70%); }
+        .state-thinking .eye { fill: #9333ea; animation: irisMove 2s infinite ease-in-out; }
+        @keyframes irisMove { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(10px); } }
+
+        /* GREETING: Waving hand (simulated head tilt) */
+        .state-greeting .avatar-container { transform: rotate(5deg); }
+        .state-greeting .mouth { d: path("M 40 70 Q 50 80 60 70"); } /* Smile */
+
+        /* EXPLAINING: Mouth moving */
+        .state-explaining .mouth { animation: talk 0.3s infinite alternate; }
+        @keyframes talk { from { d: path("M 40 70 Q 50 70 60 70"); } to { d: path("M 40 75 Q 50 85 60 75"); } }
+
+        /* HAPPY: Jump and big smile */
+        .state-happy .avatar-container { animation: jump 0.6s ease-out; }
+        @keyframes jump { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-40px); } }
+        .state-happy .mouth { d: path("M 35 65 Q 50 90 65 65"); }
+
+        /* CONFUSED: Tilt and flat eyes */
+        .state-confused .avatar-container { transform: rotate(-10deg); }
+        .state-confused .eye { transform: scaleY(0.2); }
+
+        /* --- Overlay UI --- */
+        .status-overlay {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            display: flex;
+            gap: 15px;
+        }
+
+        .status-badge {
+            background: var(--glass);
+            border: 1px solid var(--glass-border);
+            padding: 8px 15px;
+            border-radius: 30px;
+            font-size: 0.8rem;
+            backdrop-filter: blur(5px);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #555; }
+        .status-dot.active { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+
+    </style>
+</head>
+<body class="state-idle">
+    
+    <div class="bg-glow"></div>
+
+    <div class="dialogue-wrapper" id="bubble-wrap" style="display: none;">
+        <div class="dialogue-bubble" id="dialogue-text">Hello! I'm Aura.</div>
+        <div class="bubble-tail"></div>
+    </div>
+
+    <div class="avatar-container">
+        <!-- SVG Avatar -->
+        <svg id="aura-avatar" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+            <!-- Aura Ring -->
+            <circle cx="50" cy="50" r="45" fill="none" stroke="var(--accent)" stroke-width="0.5" stroke-dasharray="2,4" class="glow-part" opacity="0.4">
+                <animateTransform attributeName="transform" type="rotate" from="0 50 50" to="360 50 50" dur="20s" repeatCount="indefinite" />
+            </circle>
+            
+            <!-- Head Body -->
+            <path d="M 20 40 Q 20 20 50 20 Q 80 20 80 40 L 80 70 Q 80 85 50 85 Q 20 85 20 70 Z" class="head" fill="#141728" />
+            
+            <!-- Eyes -->
+            <ellipse id="eye-left" cx="35" cy="45" rx="4" ry="6" class="eye glow-part" />
+            <ellipse id="eye-right" cx="65" cy="45" rx="4" ry="6" class="eye glow-part" />
+            
+            <!-- Mouth -->
+            <path id="mouth" d="M 40 70 Q 50 72 60 70" class="mouth" />
+            
+            <!-- Antennas/Glow points -->
+            <circle cx="50" cy="15" r="3" fill="var(--accent)" class="glow-part">
+                <animate attributeName="opacity" values="1;0.3;1" dur="2s" repeatCount="indefinite" />
+            </circle>
+        </svg>
+    </div>
+
+    <div class="status-overlay">
+        <div class="status-badge">
+            <div class="status-dot" id="stt-dot"></div>
+            <span>STT</span>
+        </div>
+        <div class="status-badge">
+            <div class="status-dot" id="llm-dot"></div>
+            <span>BRAIN</span>
+        </div>
+    </div>
+
+    <script>
+        const body = document.body;
+        const dialogueWrap = document.getElementById('bubble-wrap');
+        const dialogueText = document.getElementById('dialogue-text');
+        const sttDot = document.getElementById('stt-dot');
+        const llmDot = document.getElementById('llm-dot');
+
+        let lastText = "";
+        let bubbleTimeout;
+
+        function setAvatarState(state) {
+            body.className = `state-${state}`;
+        }
+
+        function showSpeech(text) {
+            if (!text || text === lastText) return;
+            lastText = text;
+            
+            dialogueWrap.style.display = 'block';
+            dialogueText.innerText = text;
+            
+            // Restart animation
+            dialogueText.style.animation = 'none';
+            dialogueText.offsetHeight; /* trigger reflow */
+            dialogueText.style.animation = null;
+
+            clearTimeout(bubbleTimeout);
+            bubbleTimeout = setTimeout(() => {
+                // Fade out?
+                // dialogueWrap.style.display = 'none';
+            }, 10000);
+        }
+
+        // Connect SSE
+        const es = new EventSource("/events");
+        es.onmessage = function(e) {
+            const data = JSON.parse(e.data);
+
+            // Update Status Dots
+            if (data.stt_status && data.stt_status !== "Idle") {
+                sttDot.classList.add('active');
+            } else {
+                sttDot.classList.remove('active');
+            }
+
+            if (data.llm_busy) {
+                llmDot.classList.add('active');
+                setAvatarState('thinking');
+            } else {
+                llmDot.classList.remove('active');
+            }
+
+            // Logic for state transitions
+            if (data.current_thought && data.llm_busy) {
+                setAvatarState('thinking');
+            } else if (data.stt_status && data.stt_status.includes("Listening")) {
+                setAvatarState('greeting');
+            } else if (data.avatar_state) {
+                setAvatarState(data.avatar_state);
+            } else if (!data.llm_busy) {
+                setAvatarState('idle');
+            }
+
+            // Show logs/agent speech
+            if (data.new_events && data.new_events.length > 0) {
+                data.new_events.forEach(event => {
+                    if (event.includes("Agent:")) {
+                        const speech = event.split("Agent:")[1].trim();
+                        setAvatarState('explaining');
+                        showSpeech(speech);
+                        
+                        // Reset to idle after speech finishes (approximation)
+                        setTimeout(() => setAvatarState('idle'), 5000);
+                    }
+                    if (event.includes("Saved to Memory")) {
+                        setAvatarState('happy');
+                        setTimeout(() => setAvatarState('idle'), 2000);
+                    }
+                });
+            }
+        };
+    </script>
+</body>
+</html>

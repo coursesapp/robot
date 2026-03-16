@@ -32,7 +32,7 @@ class LLMClient:
                 logger.warning("Groq engine selected but no API key found in settings!")
             logger.info(f"Configured for Groq Cloud API using model: {self.groq_model}")
 
-    def generate(self, prompt: str, max_tokens: int = 128, temperature: float = 0.7, stop: Optional[List[str]] = None) -> str:
+    def generate(self, prompt: str, max_tokens: int = 1024, temperature: float = 0.7, stop: Optional[List[str]] = None) -> str:
         if not prompt:
             return ""
 

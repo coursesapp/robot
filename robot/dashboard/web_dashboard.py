@@ -30,6 +30,7 @@ class DashboardState:
     
     # Dedicated thought tracking
     current_thought: str = ""
+    avatar_state: str = "idle" # NEW: avatar state (idle, thinking, happy, etc.)
     start_time: float = field(default_factory=time.time)
     
     # Event log (full history for /log) and pending events for SSE
@@ -87,6 +88,7 @@ class WebDashboard:
                 "objects": self.state.objects,
                 "uptime": int(time.time() - self.state.start_time),
                 "current_thought": self.state.current_thought,
+                "avatar_state": self.state.avatar_state,
                 "new_events": list(self.state.new_events),
             }
             # Clear pending events after copying them to snapshot
@@ -108,6 +110,10 @@ class WebDashboard:
 
         @app.route("/")
         def index():
+            return render_template("immersive_dashboard.html", port=self.port)
+            
+        @app.route("/technical")
+        def technical():
             return render_template("index.html", port=self.port)
             
         @app.route("/video_feed")

@@ -95,6 +95,7 @@ logs/
 .env
 .env.local
 .env.*.local
+config/settings.yaml
 
 # Databases and large data
 *.db
