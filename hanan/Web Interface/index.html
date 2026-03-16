@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+  <!-- Lottie Player -->
+  <script src="https://unpkg.com/@lottiefiles/lottie-player@1.7.1/dist/lottie-player.js"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="bg-ambient"></div>
+  <div class="glow-orb"></div>
+  <div class="glow-orb-2"></div>
+  <div class="noise-overlay"></div>
+  <div class="floating-particles" id="particles"></div>
+
+  <div class="card">
+    <!-- Character stage with Lottie -->
+    <div class="character-stage">
+      <div class="avatar-wrapper">
+        <lottie-player
+          id="lottieCharacter"
+          src="https://lottie.host/2d721ab5-f22a-4df0-9181-39c2e519e63f/5bP9uIf0Qg.json"
+          background="transparent"
+          speed="1"
+          style="width: 320px; height: 320px;"
+          loop
+          autoplay
+        ></lottie-player>
+      </div>
+    </div>
+
+    <!-- Dialogue box + animated badge -->
+    <div class="dialogue-box">
+      <div class="dialogue-text">
+        <i class="fa-regular fa-message" style="color:#d3adff; filter: drop-shadow(0 0 5px white);"></i>
+        <span id="messageSpan">I am here for you</span>
+      </div>
+      <div style="display: flex; justify-content: flex-end; align-items: center; gap: 1rem;">
+        <span class="state-badge" id="stateBadge"><i class="fa-regular fa-star"></i> idle</span>
+      </div>
+    </div>
+
+    <!-- Controller + JSON input -->
+    <div class="controller-panel">
+      <div class="button-grid" id="stateButtons">
+        <button class="state-btn" data-state="idle"> Idle</button>
+        <button class="state-btn" data-state="greeting"> Greeting</button>
+        <button class="state-btn" data-state="thinking"> Thinking</button>
+        <button class="state-btn" data-state="explaining"> Explaining</button>
+        <button class="state-btn" data-state="success"> Success</button>
+        <button class="state-btn" data-state="error"> Error</button>
+      </div>
+
+      <div class="simulate-input">
+        <input type="text" id="jsonInput" value='{"text": "Hello! How can I assist you today?", "state": "greeting"}'>
+        <button id="sendJsonBtn"><i class="fa-regular fa-paper-plane"></i> Send</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
